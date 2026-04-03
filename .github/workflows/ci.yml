@@ -47,8 +47,6 @@ on:
         required: false
       SNYK_TOKEN:
         required: false
-      GITHUB_TOKEN:
-        required: true
       VERCEL_TOKEN:
         required: false
       VERCEL_ORG_ID:
