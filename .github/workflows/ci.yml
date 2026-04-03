@@ -8,6 +8,11 @@ on:
         required: false
         type: string
         default: '20'
+      package-manager:
+        description: 'Package manager to use (npm, pnpm, yarn)'
+        required: false
+        type: string
+        default: 'npm'
       run-e2e:
         description: 'Whether to run E2E tests'
         required: false
@@ -68,6 +73,15 @@ on:
           - '20'
           - '22'
         default: '20'
+      package-manager:
+        description: 'Package manager to use'
+        required: false
+        type: choice
+        options:
+          - npm
+          - pnpm
+          - yarn
+        default: 'npm'
       run-e2e:
         description: 'Whether to run E2E tests'
         required: false
@@ -104,6 +118,7 @@ on:
 
 env:
   NODE_VERSION: ${{ inputs.node-version || '20' }}
+  PACKAGE_MANAGER: ${{ inputs.package-manager || 'npm' }}
 
 jobs:
   # ============================================
@@ -117,28 +132,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        if: ${{ (inputs.package-manager || 'npm') == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        id: npm-cache
-        with:
-          path: |
-            **/node_modules
-            ~/.npm
-          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+          cache: ${{ env.PACKAGE_MANAGER }}
 
       - name: Install dependencies
-        if: steps.npm-cache.outputs.cache-hit != 'true'
-        run: npm ci
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PM" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
       - name: Run ESLint
-        run: npm run lint
+        run: ${{ env.PACKAGE_MANAGER }} run lint
 
       - name: Run Prettier check
         run: npx prettier --check .
@@ -159,15 +175,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        if: ${{ (inputs.package-manager || 'npm') == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
+          cache: ${{ env.PACKAGE_MANAGER }}
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PM" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
       - name: Install Playwright browsers
         if: inputs.run-e2e
@@ -258,35 +285,44 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   npm-audit:
-    name: Audit Dependencies (npm audit)
+    name: Audit Dependencies
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        if: ${{ (inputs.package-manager || 'npm') == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        id: npm-cache
-        with:
-          path: |
-            **/node_modules
-            ~/.npm
-          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+          cache: ${{ env.PACKAGE_MANAGER }}
 
       - name: Install dependencies
-        if: steps.npm-cache.outputs.cache-hit != 'true'
-        run: npm ci
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PM" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
-      - name: Run npm audit
-        run: npm audit --audit-level=moderate
+      - name: Run audit
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm audit --audit-level=moderate
+          elif [ "$PM" = "yarn" ]; then
+            yarn audit --level moderate
+          else
+            npm audit --audit-level=moderate
+          fi
 
   snyk-scan:
     name: Snyk Vulnerability Scan
@@ -297,25 +333,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        if: ${{ (inputs.package-manager || 'npm') == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: Cache node_modules
-        uses: actions/cache@v4
-        id: npm-cache
-        with:
-          path: |
-            **/node_modules
-            ~/.npm
-          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+          cache: ${{ env.PACKAGE_MANAGER }}
 
       - name: Install dependencies
-        if: steps.npm-cache.outputs.cache-hit != 'true'
-        run: npm ci
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PM" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
       - name: Install Snyk CLI
         run: npm install -g snyk
@@ -370,15 +407,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup pnpm
+        if: ${{ (inputs.package-manager || 'npm') == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: '**/package-lock.json'
+          cache: ${{ env.PACKAGE_MANAGER }}
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PM" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
       - name: Run tests with coverage (LCOV)
         run: npx jest --coverage --coverageReporters=lcov --coverageReporters=json
@@ -438,16 +486,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        if: ${{ (inputs.package-manager || 'npm') == 'pnpm' }}
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: ${{ env.PACKAGE_MANAGER }}
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          PM="${{ env.PACKAGE_MANAGER }}"
+          if [ "$PM" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          elif [ "$PM" = "yarn" ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
 
       - name: Build application
-        run: npm run build
+        run: ${{ env.PACKAGE_MANAGER }} run build
 
       - name: Deploy to ${{ inputs.deploy-target }}
         run: |
