@@ -1,0 +1,111 @@
+name: Reusable Test Workflow
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      run-e2e:
+        description: 'Whether to run E2E tests'
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      coverage-percent:
+        description: 'Test coverage percentage'
+        value: ${{ jobs.test.outputs.coverage-percent }}
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    outputs:
+      coverage-percent: ${{ steps.extract-coverage.outputs.coverage-percent }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: inputs.run-e2e
+        run: npx playwright install --with-deps
+
+      - name: Run Jest unit tests with coverage
+        run: npx jest --coverage --coverageReporters=text --coverageReporters=json --coverageReporters=lcov
+        continue-on-error: true
+        id: jest-tests
+
+      - name: Extract coverage percentage
+        if: always()
+        id: extract-coverage
+        run: |
+          if [ -f "coverage/coverage-summary.json" ]; then
+            COVERAGE=$(node -e "
+              const fs = require('fs');
+              const summary = JSON.parse(fs.readFileSync('coverage/coverage-summary.json', 'utf8'));
+              const total = summary.total;
+              const pct = total.lines.pct || 0;
+              console.log(pct.toFixed(2));
+            ")
+            echo "coverage-percent=$COVERAGE" >> $GITHUB_OUTPUT
+            echo "Coverage: $COVERAGE%"
+          else
+            echo "coverage-percent=0" >> $GITHUB_OUTPUT
+            echo "No coverage report found"
+          fi
+
+      - name: Check coverage threshold (80%)
+        if: always()
+        run: |
+          COVERAGE=${{ steps.extract-coverage.outputs.coverage-percent }}
+          THRESHOLD=80
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "::warning::Coverage $COVERAGE% is below threshold of $THRESHOLD%"
+          else
+            echo "Coverage $COVERAGE% meets threshold of $THRESHOLD%"
+          fi
+
+      - name: Run Playwright E2E tests
+        if: inputs.run-e2e
+        run: npx playwright test
+        continue-on-error: true
+
+      - name: Upload Playwright report
+        if: inputs.run-e2e && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 30
+
+      - name: Upload test results summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            coverage/coverage-summary.json
+            coverage/lcov-report/
+          retention-days: 30

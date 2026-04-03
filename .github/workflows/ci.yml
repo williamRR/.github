@@ -1,0 +1,196 @@
+name: CI Pipeline
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      run-e2e:
+        description: 'Whether to run E2E tests'
+        required: false
+        type: boolean
+        default: true
+      sonar-project-key:
+        description: 'SonarQube project key'
+        required: false
+        type: string
+        default: ''
+      deploy-target:
+        description: 'Deployment target (staging/production/none)'
+        required: false
+        type: string
+        default: 'none'
+  workflow_dispatch:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: choice
+        options:
+          - '18'
+          - '20'
+          - '22'
+        default: '20'
+      run-e2e:
+        description: 'Whether to run E2E tests'
+        required: false
+        type: boolean
+        default: true
+      sonar-project-key:
+        description: 'SonarQube project key'
+        required: false
+        type: string
+        default: ''
+      deploy-target:
+        description: 'Deployment target'
+        required: false
+        type: choice
+        options:
+          - none
+          - staging
+          - production
+        default: none
+  push:
+    branches:
+      - main
+      - develop
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+
+env:
+  NODE_VERSION: ${{ inputs.node-version || '20' }}
+
+jobs:
+  # ============================================
+  # Phase 1: Lint (Fast feedback)
+  # ============================================
+  lint:
+    name: Lint Check
+    uses: ./.github/workflows/lint.yml
+    with:
+      node-version: ${{ env.NODE_VERSION }}
+
+  # ============================================
+  # Phase 2: Test & Security (Parallel)
+  # ============================================
+  test:
+    name: Run Tests
+    needs: lint
+    uses: ./.github/workflows/test.yml
+    with:
+      node-version: ${{ env.NODE_VERSION }}
+      run-e2e: ${{ inputs.run-e2e || true }}
+
+  security:
+    name: Security Scan
+    uses: ./.github/workflows/security.yml
+    with:
+      node-version: ${{ env.NODE_VERSION }}
+
+  # ============================================
+  # Phase 3: SonarQube Analysis (After test)
+  # ============================================
+  sonarqube:
+    name: SonarQube Analysis
+    needs: test
+    if: ${{ inputs.sonar-project-key != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      checks: read
+      pull-requests: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+      - name: Setup SonarQube CLI
+        run: |
+          curl -sSLo sonar-scanner.zip 'https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-6.1.0.4477-linux.zip'
+          unzip -q sonar-scanner.zip
+          rm sonar-scanner.zip
+          echo "$PWD/sonar-scanner-6.1.0.4477-linux/bin" >> $GITHUB_PATH
+
+      - name: Run SonarQube scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          sonar-scanner \
+            -Dsonar.projectKey=${{ inputs.sonar-project-key }} \
+            -Dsonar.organization=${{ github.repository_owner }} \
+            -Dsonar.sources=. \
+            -Dsonar.coverageReportPaths=coverage/coverage-summary.json \
+            -Dsonar.python.coverage.reportPaths=coverage/lcov.info
+
+  # ============================================
+  # Phase 4: Deploy (Main branch only)
+  # ============================================
+  deploy:
+    name: Deploy
+    needs: [test, security]
+    if: |
+      github.ref == 'refs/heads/main' &&
+      (inputs.deploy-target || 'none') != 'none'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.deploy-target }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Deploy to ${{ inputs.deploy-target }}
+        run: |
+          echo "Deploying to ${{ inputs.deploy-target }}..."
+          # Add your deployment logic here
+          # Examples: terraform apply, gcloud run deploy, etc.
+
+  # ============================================
+  # Summary: CI Status
+  # ============================================
+  ci-status:
+    name: CI Status
+    needs: [lint, test, security]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check CI Status
+        run: |
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Test: ${{ needs.test.result }}"
+          echo "Security: ${{ needs.security.result }}"
+
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.security.result }}" != "success" ]; then
+            echo "::error::CI pipeline failed"
+            exit 1
+          fi
+
+          echo "::notice::CI pipeline passed successfully"

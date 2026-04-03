@@ -1,0 +1,97 @@
+name: Reusable SonarQube Workflow
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        required: false
+        type: string
+        default: '20'
+      sonar-org:
+        description: 'SonarCloud organization key'
+        required: false
+        type: string
+        default: 'williamrr'
+      sonar-project-key:
+        description: 'SonarCloud project key'
+        required: true
+        type: string
+      sonar-project-name:
+        description: 'SonarCloud project name (defaults to project key)'
+        required: false
+        type: string
+    secrets:
+      SONAR_TOKEN:
+        description: 'SonarCloud authentication token'
+        required: true
+    outputs:
+      quality-gate-status:
+        description: 'Quality gate status (PASS/FAIL)'
+        value: ${{ jobs.sonarcloud.outputs.quality-gate-status }}
+
+jobs:
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+
+    outputs:
+      quality-gate-status: ${{ steps.sonarqube-scan.outputs.quality-gate-status }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'npm'
+          cache-dependency-path: '**/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests with coverage (LCOV)
+        run: npx jest --coverage --coverageReporters=lcov --coverageReporters=json
+        continue-on-error: true
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ inputs.sonar-org }}
+            -Dsonar.projectKey=${{ inputs.sonar-project-key }}
+            -Dsonar.projectName=${{ inputs.sonar-project-name || inputs.sonar-project-key }}
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+            -Dsonar.coverage.exclusions=**/*.test.ts,**/*.test.tsx,**/*.spec.ts,**/*.spec.tsx,**/tests/**,**/*.config.js,**/*.config.ts,**/dist/**,**/build/**,**/.next/**
+            -Dsonar.typescript.lcov.reportPaths=coverage/lcov.info
+            -Dsonar.sourceEncoding=UTF-8
+            -Dsonar.eslint.reportPaths=eslint-report.json
+            -Dsonar.testExecutionReportPaths=test-execution-report.json
+        id: sonarqube-scan
+
+      - name: Upload SonarCloud report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonarcloud-report
+          path: .scannerwork/report-task.txt
+          retention-days: 30
+
+      - name: Check Quality Gate
+        if: always()
+        run: |
+          echo "Quality Gate Status: ${{ steps.sonarqube-scan.outputs.quality-gate-status }}"
+          if [ "${{ steps.sonarqube-scan.outputs.quality-gate-status }}" != "OK" ]; then
+            echo "::warning::Quality Gate failed"
+            exit 1
+          else
+            echo "Quality Gate passed"
+          fi
+        continue-on-error: false
