@@ -392,6 +392,7 @@ jobs:
     if: ${{ inputs.sonar-project-key != '' }}
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: read
       checks: read
       pull-requests: read
